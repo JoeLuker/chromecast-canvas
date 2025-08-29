@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Canvas Receiver</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #canvas {
+            display: block;
+            background: white;
+            cursor: none;
+        }
+        
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px 20px;
+            border-radius: 5px;
+        }
+        
+        #cursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: red;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            transition: all 0.1s ease;
+            z-index: 1000;
+        }
+        
+        .user-cursor {
+            position: absolute;
+            padding: 5px 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 3px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1001;
+        }
+        
+        #title {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 48px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+    </style>
+    <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="status">Waiting for connection...</div>
+    <div id="title">Cast Canvas</div>
+    <div id="cursor"></div>
+    
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        const cursor = document.getElementById('cursor');
+        
+        // Set canvas size to full screen
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // Track connected users
+        let users = new Map();
+        let drawingColor = '#000000';
+        let brushSize = 5;
+        
+        // Initialize Cast Receiver
+        const context = cast.framework.CastReceiverContext.getInstance();
+        
+        // Optional: Show debug overlay (remove in production)
+        context.setLoggerLevel(cast.framework.LoggerLevel.DEBUG);
+        
+        // Handle incoming messages from sender
+        context.addCustomMessageListener('urn:x-cast:com.example.canvas', event => {
+            const senderId = event.senderId;
+            const data = event.data;
+            
+            console.log('Received message:', data);
+            
+            switch(data.type) {
+                case 'DRAW':
+                    drawLine(data.from, data.to, data.color, data.size);
+                    break;
+                    
+                case 'CLEAR':
+                    clearCanvas();
+                    break;
+                    
+                case 'CURSOR':
+                    updateCursor(data.x, data.y);
+                    break;
+                    
+                case 'TEXT':
+                    drawText(data.text, data.x, data.y, data.size, data.color);
+                    break;
+                    
+                case 'SHAPE':
+                    drawShape(data.shape, data.x, data.y, data.size, data.color);
+                    break;
+                    
+                case 'SET_BACKGROUND':
+                    setBackground(data.color);
+                    break;
+            }
+            
+            // Send acknowledgment back
+            context.sendCustomMessage('urn:x-cast:com.example.canvas', event.senderId, {
+                type: 'ACK',
+                timestamp: Date.now()
+            });
+        });
+        
+        // Handle sender connected
+        context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, event => {
+            console.log('Sender connected:', event.senderId);
+            users.set(event.senderId, {
+                id: event.senderId,
+                name: `User ${users.size + 1}`,
+                color: getRandomColor()
+            });
+            updateStatus();
+        });
+        
+        // Handle sender disconnected
+        context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, event => {
+            console.log('Sender disconnected:', event.senderId);
+            users.delete(event.senderId);
+            updateStatus();
+            
+            if (users.size === 0) {
+                status.textContent = 'Waiting for connection...';
+                setTimeout(() => {
+                    if (users.size === 0) {
+                        clearCanvas();
+                    }
+                }, 5000);
+            }
+        });
+        
+        // Drawing functions
+        function drawLine(from, to, color, size) {
+            ctx.strokeStyle = color || '#000000';
+            ctx.lineWidth = size || 5;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(from.x * canvas.width, from.y * canvas.height);
+            ctx.lineTo(to.x * canvas.width, to.y * canvas.height);
+            ctx.stroke();
+        }
+        
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.style.background = 'white';
+        }
+        
+        function updateCursor(x, y) {
+            cursor.style.left = (x * canvas.width) + 'px';
+            cursor.style.top = (y * canvas.height) + 'px';
+            cursor.style.display = 'block';
+            
+            // Hide cursor after 2 seconds of inactivity
+            clearTimeout(cursor.hideTimeout);
+            cursor.hideTimeout = setTimeout(() => {
+                cursor.style.display = 'none';
+            }, 2000);
+        }
+        
+        function drawText(text, x, y, size, color) {
+            ctx.fillStyle = color || '#000000';
+            ctx.font = `${size || 30}px Arial`;
+            ctx.fillText(text, x * canvas.width, y * canvas.height);
+        }
+        
+        function drawShape(shape, x, y, size, color) {
+            ctx.fillStyle = color || '#000000';
+            const centerX = x * canvas.width;
+            const centerY = y * canvas.height;
+            
+            ctx.beginPath();
+            switch(shape) {
+                case 'circle':
+                    ctx.arc(centerX, centerY, size, 0, Math.PI * 2);
+                    break;
+                case 'square':
+                    ctx.rect(centerX - size/2, centerY - size/2, size, size);
+                    break;
+                case 'triangle':
+                    ctx.moveTo(centerX, centerY - size);
+                    ctx.lineTo(centerX - size, centerY + size);
+                    ctx.lineTo(centerX + size, centerY + size);
+                    ctx.closePath();
+                    break;
+            }
+            ctx.fill();
+        }
+        
+        function setBackground(color) {
+            canvas.style.background = color;
+        }
+        
+        function updateStatus() {
+            if (users.size > 0) {
+                status.textContent = `${users.size} user${users.size > 1 ? 's' : ''} connected`;
+            }
+        }
+        
+        function getRandomColor() {
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8'];
+            return colors[Math.floor(Math.random() * colors.length)];
+        }
+        
+        // Start the receiver
+        context.start();
+        
+        console.log('Receiver started');
+    </script>
+</body>
+</html>
